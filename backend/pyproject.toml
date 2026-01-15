@@ -1,0 +1,55 @@
+[tool.poetry]
+name = "workbench"
+version = "0.1.0"
+description = "Signal-to-Attempt Workbench - Claude Code automation for GitHub issues"
+authors = ["Chris <chris@example.com>"]
+readme = "README.md"
+packages = [{include = "workbench", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.115.0"
+uvicorn = {extras = ["standard"], version = "^0.32.0"}
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.0"}
+asyncpg = "^0.30.0"
+alembic = "^1.14.0"
+pydantic = "^2.10.0"
+pydantic-settings = "^2.6.0"
+httpx = "^0.28.0"
+sse-starlette = "^2.1.0"
+claude-code-sdk = "^0.0.25"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.0"
+pytest-asyncio = "^0.24.0"
+pytest-cov = "^6.0.0"
+ruff = "^0.8.0"
+mypy = "^1.13.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["asyncpg.*", "sse_starlette.*", "claude_code_sdk.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
