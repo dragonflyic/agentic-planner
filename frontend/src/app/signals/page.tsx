@@ -22,12 +22,18 @@ const STATUS_COLORS: Record<string, string> = {
   noop: "bg-gray-100 text-gray-500",
 };
 
+const DEFAULT_PAGE_SIZE = 10;
+const EXPANDED_PAGE_SIZE = 50;
+
 export default function SignalsPage() {
   const [signals, setSignals] = useState<PaginatedResponse<SignalWithStatus> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stateFilter, setStateFilter] = useState<string>("");
   const [page, setPage] = useState(1);
+  const [expanded, setExpanded] = useState(false);
+
+  const pageSize = expanded ? EXPANDED_PAGE_SIZE : DEFAULT_PAGE_SIZE;
 
   useEffect(() => {
     async function fetchSignals() {
@@ -36,7 +42,9 @@ export default function SignalsPage() {
         const data = await api.listSignals({
           state: stateFilter || undefined,
           page,
-          page_size: 20,
+          page_size: pageSize,
+          sort_by: "priority",
+          sort_order: "desc",
         });
         setSignals(data);
       } catch (err) {
@@ -46,13 +54,19 @@ export default function SignalsPage() {
       }
     }
     fetchSignals();
-  }, [stateFilter, page]);
+  }, [stateFilter, page, pageSize]);
 
   async function handleRunAttempt(signalId: string) {
     try {
       await api.createAttempt(signalId);
       // Refresh the list
-      const data = await api.listSignals({ state: stateFilter || undefined, page });
+      const data = await api.listSignals({
+        state: stateFilter || undefined,
+        page,
+        page_size: pageSize,
+        sort_by: "priority",
+        sort_order: "desc",
+      });
       setSignals(data);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to create attempt");
@@ -78,9 +92,14 @@ export default function SignalsPage() {
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-          Signals
-        </h1>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+            Signals
+          </h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            Showing top {signals?.items.length || 0} of {signals?.total || 0} signals by priority
+          </p>
+        </div>
         <select
           value={stateFilter}
           onChange={(e) => {
@@ -104,6 +123,9 @@ export default function SignalsPage() {
           <thead className="bg-gray-50 dark:bg-gray-700">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                Priority
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                 Signal
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
@@ -118,8 +140,26 @@ export default function SignalsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-            {signals?.items.map((signal) => (
+            {signals?.items.map((signal, index) => (
               <tr key={signal.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg font-bold text-gray-400 dark:text-gray-500 w-6">
+                      {(page - 1) * pageSize + index + 1}
+                    </span>
+                    <span
+                      className={`px-2 py-1 text-xs font-medium rounded ${
+                        signal.priority >= 100
+                          ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+                          : signal.priority >= 0
+                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
+                          : "bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                      }`}
+                    >
+                      {signal.priority}
+                    </span>
+                  </div>
+                </td>
                 <td className="px-6 py-4">
                   <div>
                     <a
@@ -187,7 +227,7 @@ export default function SignalsPage() {
             {signals?.items.length === 0 && (
               <tr>
                 <td
-                  colSpan={4}
+                  colSpan={5}
                   className="px-6 py-8 text-center text-gray-500 dark:text-gray-400"
                 >
                   No signals found
@@ -198,8 +238,34 @@ export default function SignalsPage() {
         </table>
       </div>
 
-      {/* Pagination */}
-      {signals && signals.total_pages > 1 && (
+      {/* Expand/Collapse and Pagination */}
+      <div className="flex justify-center gap-4 mt-4">
+        {!expanded && signals && signals.total > DEFAULT_PAGE_SIZE && (
+          <button
+            onClick={() => {
+              setExpanded(true);
+              setPage(1);
+            }}
+            className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition"
+          >
+            Show more ({signals.total - DEFAULT_PAGE_SIZE} more signals)
+          </button>
+        )}
+        {expanded && (
+          <button
+            onClick={() => {
+              setExpanded(false);
+              setPage(1);
+            }}
+            className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition"
+          >
+            Show top 10 only
+          </button>
+        )}
+      </div>
+
+      {/* Pagination (only when expanded) */}
+      {expanded && signals && signals.total_pages > 1 && (
         <div className="flex justify-center gap-2 mt-4">
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}

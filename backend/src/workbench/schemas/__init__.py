@@ -2,6 +2,8 @@
 
 from workbench.schemas.common import PaginatedResponse, PaginationParams
 from workbench.schemas.signal import (
+    GitHubSyncRequest,
+    GitHubSyncResponse,
     Signal,
     SignalCreate,
     SignalListParams,
@@ -28,6 +30,8 @@ __all__ = [
     "PaginatedResponse",
     "PaginationParams",
     # Signal
+    "GitHubSyncRequest",
+    "GitHubSyncResponse",
     "Signal",
     "SignalCreate",
     "SignalUpdate",

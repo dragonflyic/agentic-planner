@@ -54,7 +54,7 @@ class AttemptWorker:
 
             # Try to claim a job
             job = await job_service.claim_job(
-                job_types=[JobType.RUN_ATTEMPT, JobType.RETRY_ATTEMPT]
+                job_types=[JobType.RUN_ATTEMPT, JobType.RETRY_ATTEMPT, JobType.SYNC_SIGNALS]
             )
 
             if job is None:
@@ -70,8 +70,13 @@ class AttemptWorker:
                 await job_service.start_job(job.id)
                 await db.commit()
 
-                # Process the job
-                result = await self._execute_attempt(db, job)
+                # Process the job based on type
+                if job.type == JobType.SYNC_SIGNALS:
+                    from workbench.worker.sync_handler import handle_sync_signals
+
+                    result = await handle_sync_signals(db, job)
+                else:
+                    result = await self._execute_attempt(db, job)
 
                 # Mark job as complete
                 await job_service.complete_job(job.id, result)

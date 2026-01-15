@@ -4,7 +4,9 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from workbench.models.signal import SignalState
 from workbench.models.attempt import AttemptStatus
@@ -88,13 +90,48 @@ class SignalListParams(BaseModel):
 
 
 class GitHubSyncRequest(BaseModel):
-    """Request to sync signals from GitHub."""
+    """Request to sync signals from GitHub Project V2."""
 
-    repos: list[str] = Field(..., min_length=1, description="List of owner/repo")
-    labels: list[str] | None = None
-    project_number: int | None = None
-    since: datetime | None = None
-    force_refresh: bool = False
+    # Option 1: Direct URL
+    project_url: str | None = Field(
+        None,
+        description="Full GitHub Project URL (e.g., https://github.com/orgs/dragonflyic/projects/1)",
+    )
+
+    # Option 2: Explicit parameters
+    org: str | None = Field(None, description="GitHub organization login")
+    project_number: int | None = Field(None, ge=1, description="Project number")
+
+    # Filters
+    repos: list[str] | None = Field(None, description="Filter to specific repos (owner/repo)")
+    labels: list[str] | None = Field(None, description="Filter by labels")
+    since: datetime | None = Field(None, description="Only sync items updated after")
+    force_refresh: bool = Field(False, description="Force update all fields")
+
+    @model_validator(mode="after")
+    def validate_and_parse(self) -> "GitHubSyncRequest":
+        """Parse URL if provided, validate that either URL or explicit params exist."""
+        # Parse project URL if provided
+        if self.project_url:
+            # Match: https://github.com/orgs/{org}/projects/{number}[/views/{view}]
+            pattern = r"https://github\.com/orgs/([^/]+)/projects/(\d+)"
+            match = re.match(pattern, self.project_url)
+            if match:
+                self.org = match.group(1)
+                self.project_number = int(match.group(2))
+            else:
+                raise ValueError(
+                    f"Invalid project URL format: {self.project_url}. "
+                    "Expected: https://github.com/orgs/<org>/projects/<number>"
+                )
+
+        # Validate we have required params
+        if not self.org or not self.project_number:
+            raise ValueError(
+                "Either project_url or both org and project_number are required"
+            )
+
+        return self
 
 
 class GitHubSyncResponse(BaseModel):

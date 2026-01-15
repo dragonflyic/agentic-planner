@@ -120,6 +120,175 @@ export default function SignalDetailPage() {
         </button>
       </div>
 
+      {/* Priority & Context */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-6">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+          Priority & Context
+        </h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
+            <div className="text-xs text-gray-500 dark:text-gray-400 uppercase">Priority</div>
+            <div className={`text-2xl font-bold ${
+              signal.priority >= 100 ? "text-green-600" :
+              signal.priority >= 0 ? "text-blue-600" : "text-gray-500"
+            }`}>
+              {signal.priority}
+            </div>
+          </div>
+          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
+            <div className="text-xs text-gray-500 dark:text-gray-400 uppercase">Context Score</div>
+            <div className="text-2xl font-bold text-purple-600">
+              {(signal.metadata_json as any)?.context?.context_score || 0}
+            </div>
+          </div>
+          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
+            <div className="text-xs text-gray-500 dark:text-gray-400 uppercase">Comments</div>
+            <div className="text-2xl font-bold text-gray-700 dark:text-gray-300">
+              {(signal.metadata_json as any)?.context?.comment_count || 0}
+            </div>
+          </div>
+          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
+            <div className="text-xs text-gray-500 dark:text-gray-400 uppercase">References</div>
+            <div className="text-2xl font-bold text-gray-700 dark:text-gray-300">
+              {(signal.metadata_json as any)?.context?.reference_count || 0}
+            </div>
+          </div>
+        </div>
+
+        {/* PR Activity */}
+        {((signal.metadata_json as any)?.context?.open_pr_count > 0 ||
+          (signal.metadata_json as any)?.context?.merged_pr_count > 0 ||
+          (signal.metadata_json as any)?.context?.closed_pr_count > 0) && (
+          <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+            <h3 className="text-sm font-medium text-amber-700 dark:text-amber-300 mb-2">PR Activity (may indicate work in progress)</h3>
+            <div className="flex gap-4 text-sm">
+              {(signal.metadata_json as any)?.context?.open_pr_count > 0 && (
+                <div className="flex items-center gap-1">
+                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                  <span className="text-gray-700 dark:text-gray-300">
+                    {(signal.metadata_json as any).context.open_pr_count} Open PR(s)
+                  </span>
+                </div>
+              )}
+              {(signal.metadata_json as any)?.context?.merged_pr_count > 0 && (
+                <div className="flex items-center gap-1">
+                  <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
+                  <span className="text-gray-700 dark:text-gray-300">
+                    {(signal.metadata_json as any).context.merged_pr_count} Merged PR(s)
+                  </span>
+                </div>
+              )}
+              {(signal.metadata_json as any)?.context?.closed_pr_count > 0 && (
+                <div className="flex items-center gap-1">
+                  <span className="w-2 h-2 bg-red-500 rounded-full"></span>
+                  <span className="text-gray-700 dark:text-gray-300">
+                    {(signal.metadata_json as any).context.closed_pr_count} Closed PR(s)
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Project Fields */}
+        {Object.keys(signal.project_fields_json || {}).length > 0 && (
+          <div className="mb-4">
+            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Project Fields</h3>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(signal.project_fields_json || {}).map(([key, value]) => (
+                <span key={key} className="px-2 py-1 bg-gray-100 dark:bg-gray-600 rounded text-sm">
+                  <span className="text-gray-500 dark:text-gray-400">{key}:</span>{" "}
+                  <span className="text-gray-800 dark:text-gray-200">{String(value)}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Parent Issue */}
+        {(signal.metadata_json as any)?.context?.parent_issue && (
+          <div className="mb-4">
+            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Parent Issue</h3>
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+              <a
+                href={`https://github.com/${(signal.metadata_json as any).context.parent_issue.repo}/issues/${(signal.metadata_json as any).context.parent_issue.number}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+              >
+                {(signal.metadata_json as any).context.parent_issue.title}
+              </a>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {(signal.metadata_json as any).context.parent_issue.repo}#{(signal.metadata_json as any).context.parent_issue.number}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Referenced Issues */}
+        {((signal.metadata_json as any)?.context?.referenced_issues?.length > 0 ||
+          (signal.metadata_json as any)?.context?.referenced_prs?.length > 0) && (
+          <div className="mb-4">
+            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Referenced Issues & PRs</h3>
+            <div className="space-y-2">
+              {[
+                ...((signal.metadata_json as any)?.context?.referenced_issues || []),
+                ...((signal.metadata_json as any)?.context?.referenced_prs || [])
+              ].map((ref: any, i: number) => (
+                <div key={i} className="bg-gray-50 dark:bg-gray-700 rounded p-2 text-sm">
+                  <a
+                    href={`https://github.com/${ref.repo}/issues/${ref.number}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    {ref.repo}#{ref.number}
+                  </a>
+                  <span className="text-gray-600 dark:text-gray-400 ml-2">{ref.title}</span>
+                  {ref.state && (
+                    <span className={`ml-2 px-1.5 py-0.5 text-xs rounded ${
+                      ref.state === "OPEN" ? "bg-green-100 text-green-700" :
+                      ref.state === "MERGED" ? "bg-purple-100 text-purple-700" :
+                      "bg-gray-100 text-gray-600"
+                    }`}>
+                      {ref.state.toLowerCase()}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Comments */}
+        {(signal.metadata_json as any)?.context?.comments?.length > 0 && (
+          <div>
+            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Recent Comments ({(signal.metadata_json as any)?.context?.comment_count || 0} total)
+            </h3>
+            <div className="space-y-3">
+              {(signal.metadata_json as any).context.comments.map((comment: any, i: number) => (
+                <div key={i} className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="font-medium text-gray-800 dark:text-gray-200">
+                      {comment.author || "Unknown"}
+                    </span>
+                    {comment.created_at && (
+                      <span className="text-xs text-gray-500">
+                        {new Date(comment.created_at).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap">
+                    {comment.body}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Description */}
       {signal.body && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-6">

@@ -7,14 +7,17 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from workbench.api.deps import DbSession
-from workbench.models import Attempt, Signal, SignalState
+from workbench.models import Attempt, JobType, Signal, SignalState
 from workbench.schemas import (
+    GitHubSyncRequest,
+    GitHubSyncResponse,
     PaginatedResponse,
     SignalCreate,
     SignalUpdate,
     SignalWithStatus,
 )
 from workbench.schemas.signal import Signal as SignalSchema
+from workbench.services.job_service import JobService
 
 router = APIRouter()
 
@@ -50,12 +53,12 @@ async def list_signals(
     count_query = select(func.count()).select_from(query.subquery())
     total = await db.scalar(count_query) or 0
 
-    # Apply sorting
+    # Apply sorting with secondary sort key for consistent ordering
     sort_column = getattr(Signal, sort_by)
     if sort_order == "desc":
-        query = query.order_by(sort_column.desc())
+        query = query.order_by(sort_column.desc(), Signal.id.asc())
     else:
-        query = query.order_by(sort_column.asc())
+        query = query.order_by(sort_column.asc(), Signal.id.asc())
 
     # Apply pagination
     offset = (page - 1) * page_size
@@ -168,6 +171,58 @@ async def create_signal(db: DbSession, signal_in: SignalCreate) -> Signal:
     await db.flush()
     await db.refresh(signal)
     return signal
+
+
+@router.post("/sync", response_model=GitHubSyncResponse, status_code=202)
+async def sync_from_github(
+    db: DbSession,
+    request: GitHubSyncRequest,
+) -> GitHubSyncResponse:
+    """
+    Trigger a sync from a GitHub Project V2.
+
+    Creates a SYNC_SIGNALS job that will be processed by a worker.
+    The sync imports all issues from the project board as signals.
+
+    You can provide either:
+    - project_url: Full URL like https://github.com/orgs/dragonflyic/projects/1
+    - org + project_number: Explicit parameters
+
+    Optional filters:
+    - repos: Only sync issues from specific repos
+    - labels: Only sync issues with specific labels
+    - since: Only sync items updated after this timestamp
+    """
+    job_service = JobService(db)
+
+    # Build job payload
+    payload = {
+        "org": request.org,
+        "project_number": request.project_number,
+        "force_refresh": request.force_refresh,
+    }
+
+    if request.since:
+        payload["since"] = request.since.isoformat()
+    if request.labels:
+        payload["label_filter"] = request.labels
+    if request.repos:
+        payload["repo_filter"] = request.repos
+
+    # Create the sync job
+    job = await job_service.create_job(
+        job_type=JobType.SYNC_SIGNALS,
+        payload=payload,
+        priority=10,  # Higher priority than regular attempt jobs
+    )
+
+    await db.commit()
+
+    return GitHubSyncResponse(
+        job_id=job.id,
+        repos_queued=request.repos or [],
+        message=f"Sync job created for {request.org}/projects/{request.project_number}",
+    )
 
 
 @router.patch("/{signal_id}", response_model=SignalSchema)
