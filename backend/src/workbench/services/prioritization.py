@@ -21,9 +21,10 @@ class PriorityConfig:
     current_iteration: str = "Cycle 9"
     current_iteration_boost: int = 200
 
-    # Done/closed items are heavily downweighted
+    # Done/closed/in-progress items are heavily downweighted
     done_penalty: int = -400
     closed_penalty: int = -400
+    in_progress_penalty: int = -350  # Already being worked on
 
     # Context richness boost (signals with more context are more actionable)
     # Max context boost is ~115 (50 from comments + 45 from refs + 20 from parent)
@@ -100,12 +101,14 @@ def calculate_signal_priority(
     else:
         score += config.non_priority_repo_penalty
 
-    # Rule 2: Done/Closed penalty
+    # Rule 2: Done/Closed/In-Progress penalty
     status = str(project_fields.get("Status", "")).lower()
     github_state = str(metadata.get("github_state", "")).lower()
 
     if status == "done" or github_state == "closed":
         score += config.done_penalty
+    elif status == "in progress":
+        score += config.in_progress_penalty
     elif github_state == "closed":
         score += config.closed_penalty
 
@@ -204,13 +207,16 @@ def explain_priority(
             "detail": f"{repo} is not in priority repos",
         })
 
-    # Rule 2: Done/Closed penalty
+    # Rule 2: Done/Closed/In-Progress penalty
     status = str(project_fields.get("Status", "")).lower()
     github_state = str(metadata.get("github_state", "")).lower()
 
     if status == "done":
         score += config.done_penalty
         breakdown.append({"rule": "done_status", "effect": config.done_penalty, "detail": "Status is Done"})
+    elif status == "in progress":
+        score += config.in_progress_penalty
+        breakdown.append({"rule": "in_progress_status", "effect": config.in_progress_penalty, "detail": "Status is In Progress (already being worked on)"})
     elif github_state == "closed":
         score += config.closed_penalty
         breakdown.append({"rule": "closed_state", "effect": config.closed_penalty, "detail": "GitHub state is closed"})
