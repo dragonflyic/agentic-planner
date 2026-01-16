@@ -22,6 +22,14 @@ from claude_code_sdk import (
 # Type for log callback: async function that takes (sequence_num, log_entry_dict, is_final)
 LogCallback = Callable[[int, dict[str, Any], bool], Awaitable[None]]
 
+# Type for questions callback: async function that saves questions and returns clarification IDs
+# Called when AskUserQuestion is detected - should save to DB and return mapping of tool_id -> clarification_ids
+QuestionsCallback = Callable[[list[dict[str, Any]]], Awaitable[dict[str, list[str]]]]
+
+# Type for answer polling: async function that checks if all clarifications are answered
+# Returns dict mapping question_id to answer, or None if not all answered yet
+AnswerPollCallback = Callable[[], Awaitable[dict[str, str] | None]]
+
 
 @dataclass
 class ExecutionMetrics:
@@ -77,6 +85,7 @@ class ClaudeCodeExecutor:
         max_tool_calls: int = 200,
         allowed_tools: list[str] | None = None,
         disallowed_tools: list[str] | None = None,
+        mock_scenario: str | None = None,
     ):
         self.cwd = cwd
         self.max_turns = max_turns
@@ -94,6 +103,7 @@ class ClaudeCodeExecutor:
         self.disallowed_tools = disallowed_tools or ["WebFetch", "WebSearch"]
         self.metrics = ExecutionMetrics()
         self._cancelled = False
+        self._mock_scenario = mock_scenario
 
     def _build_prompt(self, signal: SignalContext) -> str:
         """Build the prompt for Claude Code - focused on spec generation."""
@@ -199,16 +209,25 @@ At the end, provide a structured spec that includes:
         self,
         signal: SignalContext,
         log_callback: LogCallback | None = None,
+        on_questions_asked: QuestionsCallback | None = None,
+        poll_for_answers: AnswerPollCallback | None = None,
+        answer_poll_interval: float = 5.0,
     ) -> ExecutionResult:
         """
         Execute Claude Code against the signal.
 
-        Uses ClaudeSDKClient for bidirectional communication with interrupt support.
-        Stops execution when AskUserQuestion is called to wait for human input.
+        Uses ClaudeSDKClient for bidirectional communication. When AskUserQuestion
+        is detected, saves the questions via callback and polls for answers.
+        Once answers are available, sends them back to Claude and continues.
 
         Args:
             signal: Full signal context
             log_callback: Optional async callback for streaming logs.
+            on_questions_asked: Callback to save questions when AskUserQuestion is detected.
+                Should save to DB and return mapping of tool_id -> list of clarification IDs.
+            poll_for_answers: Callback to check if all clarifications are answered.
+                Returns dict mapping question_id to answer, or None if not ready.
+            answer_poll_interval: How often to poll for answers (seconds).
 
         Returns the execution result with parsed output and metrics.
         """
@@ -232,7 +251,13 @@ At the end, provide a structured spec that includes:
                 sequence_num += 1
                 await log_callback(sequence_num, log_entry, is_final)
 
-        client = ClaudeSDKClient(options=options)
+        # Use mock client if scenario is specified (for testing)
+        if self._mock_scenario:
+            from workbench.worker.mock_client import MockClaudeSDKClient
+            client = MockClaudeSDKClient(options=options, scenario=self._mock_scenario)
+            print(f"[EXECUTOR] Using MOCK client with scenario: {self._mock_scenario}")
+        else:
+            client = ClaudeSDKClient(options=options)
 
         try:
             async with asyncio.timeout(self.timeout_seconds):
@@ -278,15 +303,19 @@ At the end, provide a structured spec that includes:
                                     if cmd:
                                         self.metrics.commands_run.append(cmd)
 
-                                # Detect AskUserQuestion - interrupt execution
+                                # Detect AskUserQuestion - poll for answers instead of interrupting
                                 if block.name == "AskUserQuestion":
                                     question_data = block.input if isinstance(block.input, dict) else {}
-                                    questions_asked.append({
+                                    print(f"[DEBUG] AskUserQuestion detected!")
+                                    print(f"[DEBUG] block.input: {block.input}")
+
+                                    current_questions = {
                                         "id": block.id,
                                         "questions": question_data.get("questions", []),
-                                    })
+                                    }
+                                    questions_asked.append(current_questions)
 
-                                    # Write the log before interrupting
+                                    # Write the log for the assistant message
                                     await write_log({
                                         "type": "assistant",
                                         "timestamp": datetime.now(UTC).isoformat(),
@@ -297,19 +326,62 @@ At the end, provide a structured spec that includes:
                                         },
                                     })
 
-                                    # Interrupt execution to wait for human input
-                                    await write_log({
-                                        "type": "interrupted",
-                                        "timestamp": datetime.now(UTC).isoformat(),
-                                        "content": {
-                                            "reason": "AskUserQuestion called - waiting for human input",
-                                            "questions_count": len(questions_asked),
-                                        },
-                                    }, is_final=True)
+                                    # If we have callbacks for bidirectional mode, poll for answers
+                                    if on_questions_asked and poll_for_answers:
+                                        # Save questions to DB
+                                        await write_log({
+                                            "type": "event",
+                                            "timestamp": datetime.now(UTC).isoformat(),
+                                            "event": "waiting_for_human",
+                                            "message": f"Waiting for human input on {len(current_questions['questions'])} question(s)",
+                                            "details": {"questions_count": len(current_questions['questions'])},
+                                        })
 
-                                    await client.interrupt()
-                                    interrupted_for_questions = True
-                                    break
+                                        clarification_mapping = await on_questions_asked(questions_asked)
+                                        print(f"[DEBUG] Questions saved, polling for answers...")
+
+                                        # Poll for answers
+                                        answers = None
+                                        while answers is None:
+                                            await asyncio.sleep(answer_poll_interval)
+                                            answers = await poll_for_answers()
+                                            if answers is None:
+                                                print(f"[DEBUG] Answers not ready, polling again in {answer_poll_interval}s...")
+
+                                        print(f"[DEBUG] Got answers: {answers}")
+
+                                        # Format answers as a user message to send back
+                                        answer_parts = ["Here are the answers to your questions:\n"]
+                                        for q_id, answer in answers.items():
+                                            answer_parts.append(f"- {q_id}: {answer}")
+                                        answer_message = "\n".join(answer_parts)
+
+                                        await write_log({
+                                            "type": "event",
+                                            "timestamp": datetime.now(UTC).isoformat(),
+                                            "event": "human_answered",
+                                            "message": "Human provided answers, continuing execution",
+                                            "details": {"answers": answers},
+                                        })
+
+                                        # Send the answer back to Claude and continue
+                                        await client.query(answer_message)
+                                        print(f"[DEBUG] Sent answers to Claude, continuing...")
+                                        # Don't break - continue processing messages
+                                    else:
+                                        # No callbacks - fall back to interrupt mode
+                                        await write_log({
+                                            "type": "interrupted",
+                                            "timestamp": datetime.now(UTC).isoformat(),
+                                            "content": {
+                                                "reason": "AskUserQuestion called - waiting for human input",
+                                                "questions_count": len(questions_asked),
+                                            },
+                                        }, is_final=True)
+
+                                        await client.interrupt()
+                                        interrupted_for_questions = True
+                                        break
 
                                 # Check tool call budget
                                 if self.metrics.tool_call_count >= self.max_tool_calls:

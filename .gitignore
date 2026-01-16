@@ -70,3 +70,6 @@ tmp/
 # Database
 *.db
 *.sqlite3
+
+# playwright MCP
+.playwright-mcp/

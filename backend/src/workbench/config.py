@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     claude_code_path: str = "claude"
     claude_default_max_turns: int = 50
     claude_default_timeout_seconds: int = 1200  # 20 minutes
+    # Mock mode for testing: "success", "needs_human", "error", or empty for real execution
+    claude_mock_scenario: str = ""
 
     # API
     api_host: str = "0.0.0.0"

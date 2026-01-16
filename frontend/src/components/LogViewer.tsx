@@ -292,6 +292,9 @@ export function LogViewer({ attemptId, attemptStatus }: LogViewerProps) {
   useEffect(() => {
     let mounted = true;
 
+    // Clear previous logs immediately when attemptId changes
+    setLogs([]);
+
     async function initLogs() {
       setLoading(true);
       setError(null);
@@ -427,11 +430,14 @@ export function LogViewer({ attemptId, attemptStatus }: LogViewerProps) {
             const entry = parseLogContent(artifact);
             if (!entry) return null;
 
+            // Use attemptId + sequence_num as key to avoid collisions when switching attempts
+            const key = `${attemptId}-${artifact.sequence_num}`;
+
             // Render different components based on entry type
             if (entry.type === "event") {
               return (
                 <EventCard
-                  key={artifact.sequence_num}
+                  key={key}
                   entry={entry}
                   sequenceNum={artifact.sequence_num}
                 />
@@ -439,16 +445,16 @@ export function LogViewer({ attemptId, attemptStatus }: LogViewerProps) {
             }
 
             if (entry.type === "prompt") {
-              return <PromptCard key={artifact.sequence_num} entry={entry} />;
+              return <PromptCard key={key} entry={entry} />;
             }
 
             if (entry.type === "interrupted") {
-              return <InterruptedCard key={artifact.sequence_num} entry={entry} />;
+              return <InterruptedCard key={key} entry={entry} />;
             }
 
             return (
               <LogEntryCard
-                key={artifact.sequence_num}
+                key={key}
                 entry={entry}
                 sequenceNum={artifact.sequence_num}
               />

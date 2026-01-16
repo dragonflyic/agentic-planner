@@ -7,11 +7,11 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from workbench.config import get_settings
 from workbench.db.session import AsyncSessionLocal
-from workbench.models import Artifact, ArtifactType, Attempt, AttemptStatus, Clarification, Job, JobType, Signal
+from workbench.models import Artifact, ArtifactType, Attempt, AttemptStatus, Clarification, Job, JobType
 from workbench.services.job_service import JobService
 from workbench.worker.classifier import OutcomeClassifier
 from workbench.worker.executor import ClaudeCodeExecutor, SignalContext
@@ -182,11 +182,16 @@ class AttemptWorker:
                 "path": str(sandbox.path),
             })
 
-            # Create executor
+            # Create executor (with optional mock mode for testing)
+            mock_scenario = self.settings.claude_mock_scenario or None
+            if mock_scenario:
+                print(f"[RUNNER] Using MOCK mode with scenario: {mock_scenario}")
+
             executor = ClaudeCodeExecutor(
                 cwd=sandbox.path,
                 max_turns=self.settings.claude_default_max_turns,
                 timeout_seconds=self.settings.claude_default_timeout_seconds,
+                mock_scenario=mock_scenario,
             )
 
             # Log execution start
@@ -198,10 +203,77 @@ class AttemptWorker:
                 sequence_num += 1
                 await log_callback(sequence_num, log_entry, is_final)
 
-            # Execute Claude Code with log streaming
+            # Track clarification IDs created during this execution
+            created_clarification_ids: list[str] = []
+
+            # Callback to save questions when AskUserQuestion is detected
+            async def on_questions_asked(questions_list: list[dict[str, Any]]) -> dict[str, list[str]]:
+                """Save questions as clarifications and return mapping."""
+                nonlocal created_clarification_ids
+                result_mapping: dict[str, list[str]] = {}
+
+                for qa in questions_list:
+                    tool_id = qa.get("id", "unknown")
+                    questions = qa.get("questions", [])
+                    clarification_ids = []
+
+                    for i, q in enumerate(questions):
+                        # Build anchors_json with options for structured questions
+                        anchors: dict[str, Any] = {"evidence": []}
+                        options = q.get("options", [])
+                        if options:
+                            anchors["options"] = options
+                            anchors["multi_select"] = q.get("multiSelect", False)
+
+                        clarification = Clarification(
+                            attempt_id=attempt_id,
+                            question_id=f"{tool_id}_{i}",
+                            question_text=q.get("question", "Unknown question"),
+                            question_context=q.get("header", ""),
+                            default_answer=None,
+                            anchors_json=anchors,
+                        )
+                        db.add(clarification)
+                        await db.flush()
+                        clarification_ids.append(str(clarification.id))
+                        created_clarification_ids.append(str(clarification.id))
+
+                    result_mapping[tool_id] = clarification_ids
+
+                await db.commit()
+                print(f"[RUNNER] Saved {len(created_clarification_ids)} clarifications")
+                return result_mapping
+
+            # Callback to poll for answers
+            async def poll_for_answers() -> dict[str, str] | None:
+                """Check if all clarifications are answered. Returns answers or None."""
+                if not created_clarification_ids:
+                    return {}
+
+                # Query all created clarifications
+                from sqlalchemy import select
+                query = select(Clarification).where(
+                    Clarification.id.in_([UUID(cid) for cid in created_clarification_ids])
+                )
+                result = await db.execute(query)
+                clarifications = result.scalars().all()
+
+                # Check if all are answered
+                answers = {}
+                for c in clarifications:
+                    if not c.is_answered:
+                        return None  # Not all answered yet
+                    answers[c.question_id] = c.effective_answer or ""
+
+                return answers
+
+            # Execute Claude Code with bidirectional communication
             execution_result = await executor.execute(
                 signal=signal_context,
                 log_callback=executor_log_callback,
+                on_questions_asked=on_questions_asked,
+                poll_for_answers=poll_for_answers,
+                answer_poll_interval=5.0,
             )
 
             # Save the prompt as a separate artifact for easy access
@@ -277,38 +349,26 @@ class AttemptWorker:
             # If NEEDS_HUMAN, create clarification records
             if classification.status == AttemptStatus.NEEDS_HUMAN:
                 for i, q in enumerate(classification.questions):
+                    # Build anchors_json with options for structured questions
+                    anchors = {
+                        "evidence": q.evidence,
+                    }
+                    if q.options:
+                        anchors["options"] = [
+                            {"label": opt.label, "description": opt.description}
+                            for opt in q.options
+                        ]
+                        anchors["multi_select"] = q.multi_select
+
                     clarification = Clarification(
                         attempt_id=attempt_id,
                         question_id=f"q_{i}",
                         question_text=q.question,
                         question_context=q.why_needed,
                         default_answer=q.proposed_default,
-                        anchors_json={"evidence": q.evidence},
+                        anchors_json=anchors,
                     )
                     db.add(clarification)
-
-                # Update signal state to blocked
-                await db.execute(
-                    update(Signal)
-                    .where(Signal.id == signal_id)
-                    .values(state="blocked")
-                )
-
-            elif classification.status == AttemptStatus.SUCCESS:
-                # Update signal state to completed
-                await db.execute(
-                    update(Signal)
-                    .where(Signal.id == signal_id)
-                    .values(state="completed")
-                )
-
-            elif classification.status == AttemptStatus.FAILED:
-                # Reset signal to pending state for potential retry
-                await db.execute(
-                    update(Signal)
-                    .where(Signal.id == signal_id)
-                    .values(state="pending")
-                )
 
             await db.commit()
 

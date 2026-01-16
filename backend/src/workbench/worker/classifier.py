@@ -10,6 +10,14 @@ from workbench.worker.sandbox import DiffStats
 
 
 @dataclass
+class QuestionOption:
+    """An option for a structured question."""
+
+    label: str
+    description: str = ""
+
+
+@dataclass
 class Question:
     """A question extracted from Claude's output."""
 
@@ -17,6 +25,9 @@ class Question:
     why_needed: str = ""
     proposed_default: str | None = None
     evidence: list[str] = field(default_factory=list)
+    # Structured question fields (from AskUserQuestion tool)
+    options: list[QuestionOption] = field(default_factory=list)
+    multi_select: bool = False
 
 
 @dataclass
@@ -113,12 +124,15 @@ class OutcomeClassifier:
 
         # If we have questions, it's NEEDS_HUMAN (regardless of execution success)
         if questions:
+            print(f"[DEBUG] Returning NEEDS_HUMAN with {len(questions)} questions")
             return ClassificationResult(
                 status=AttemptStatus.NEEDS_HUMAN,
                 questions=questions,
                 assumptions=self._extract_assumptions(all_text),
                 what_changed=diff_stats.files_touched or [],
             )
+
+        print(f"[DEBUG] No questions found, continuing classification...")
 
         # Now check for execution errors (after questions, since questions aren't errors)
         if not execution_result.success:
@@ -182,22 +196,48 @@ class OutcomeClassifier:
         return "\n".join(texts)
 
     def _extract_questions_from_result(self, execution_result: ExecutionResult) -> list[Question]:
-        """Extract questions from ExecutionResult.questions_asked (SDK format)."""
+        """Extract questions from ExecutionResult.questions_asked (SDK format).
+
+        If interrupted_for_questions is False, the questions were already answered
+        during bidirectional communication, so we return an empty list.
+        """
         questions = []
+
+        print(f"[DEBUG] Extracting questions from execution_result.questions_asked: {execution_result.questions_asked}")
+        print(f"[DEBUG] interrupted_for_questions: {execution_result.interrupted_for_questions}")
+
+        # If questions were answered during execution (bidirectional mode), don't return them
+        if not execution_result.interrupted_for_questions and execution_result.questions_asked:
+            print(f"[DEBUG] Questions were answered during execution, not returning as NEEDS_HUMAN")
+            return []
 
         for qa in execution_result.questions_asked:
             # qa is a dict with "id" and "questions" (list of question objects)
             q_list = qa.get("questions", [])
+            print(f"[DEBUG] Processing qa: {qa}, q_list: {q_list}")
             for q in q_list:
+                # Extract options if present (structured AskUserQuestion)
+                raw_options = q.get("options", [])
+                options = [
+                    QuestionOption(
+                        label=opt.get("label", ""),
+                        description=opt.get("description", ""),
+                    )
+                    for opt in raw_options
+                ]
+
                 questions.append(
                     Question(
                         question=q.get("question", "Unknown question"),
                         why_needed=q.get("header", ""),
                         proposed_default=None,
                         evidence=[],
+                        options=options,
+                        multi_select=q.get("multiSelect", False),
                     )
                 )
 
+        print(f"[DEBUG] Extracted {len(questions)} questions")
         return questions
 
     def _extract_questions(self, output: dict[str, Any]) -> list[Question]:

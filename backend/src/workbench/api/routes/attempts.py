@@ -217,6 +217,9 @@ async def list_attempt_clarifications(
             "answer_text": c.answer_text,
             "answered_at": c.answered_at.isoformat() if c.answered_at else None,
             "is_answered": c.is_answered,
+            # Include structured question options if present
+            "options": c.anchors_json.get("options") if c.anchors_json else None,
+            "multi_select": c.anchors_json.get("multi_select", False) if c.anchors_json else False,
         }
         for c in clarifications
     ]
