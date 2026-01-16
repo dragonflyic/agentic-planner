@@ -13,7 +13,6 @@ from workbench.config import get_settings
 from workbench.db.session import AsyncSessionLocal
 from workbench.models import Artifact, ArtifactType, Attempt, AttemptStatus, Clarification, Job, JobType
 from workbench.services.job_service import JobService
-from workbench.worker.classifier import OutcomeClassifier
 from workbench.worker.executor import ClaudeCodeExecutor, SignalContext
 from workbench.worker.sandbox import WorkspaceSandbox
 
@@ -304,16 +303,33 @@ class AttemptWorker:
             # Get diff stats
             diff_stats = await sandbox.get_diff_stats()
 
-            # Classify outcome
-            classifier = OutcomeClassifier()
-            classification = classifier.classify(execution_result, diff_stats)
+            # Determine status directly (simple logic)
+            error_message: str | None = None
+            if execution_result.timed_out:
+                status = AttemptStatus.ERROR
+                error_message = "Execution timed out"
+            elif execution_result.budget_exceeded:
+                status = AttemptStatus.ERROR
+                error_message = "Tool call budget exceeded"
+            elif not execution_result.success:
+                status = AttemptStatus.ERROR
+                error_message = execution_result.output.get("error", "Unknown error")
+            elif execution_result.interrupted_for_questions:
+                status = AttemptStatus.WAITING
+            else:
+                status = AttemptStatus.COMPLETE
+
+            # Extract PR URL if present
+            import re
+            pr_url_pattern = r"https://github\.com/[^/]+/[^/]+/pull/\d+"
+            all_text = execution_result.final_text or ""
+            pr_match = re.search(pr_url_pattern, all_text)
+            pr_url = pr_match.group(0) if pr_match else None
 
             # Build summary
             summary = {
-                "status": classification.status.value,
-                "what_changed": classification.what_changed,
-                "assumptions": classification.assumptions,
-                "risk_flags": classification.risk_flags,
+                "status": status.value,
+                "what_changed": diff_stats.files_touched or [],
                 "metrics": {
                     "tool_calls": execution_result.metrics.tool_call_count,
                     "turns": execution_result.metrics.turn_count,
@@ -324,7 +340,7 @@ class AttemptWorker:
 
             # Update attempt with results
             update_values: dict[str, Any] = {
-                "status": classification.status,
+                "status": status,
                 "finished_at": datetime.now(UTC),
                 "summary_json": summary,
                 "runner_metadata_json": {
@@ -335,41 +351,16 @@ class AttemptWorker:
                 },
             }
 
-            if classification.error_message:
-                update_values["error_message"] = classification.error_message
+            if error_message:
+                update_values["error_message"] = error_message
 
-            if classification.pr_url:
-                update_values["pr_url"] = classification.pr_url
+            if pr_url:
+                update_values["pr_url"] = pr_url
                 update_values["branch_name"] = sandbox.branch_name
 
             await db.execute(
                 update(Attempt).where(Attempt.id == attempt_id).values(**update_values)
             )
-
-            # If NEEDS_HUMAN, create clarification records
-            if classification.status == AttemptStatus.NEEDS_HUMAN:
-                for i, q in enumerate(classification.questions):
-                    # Build anchors_json with options for structured questions
-                    anchors = {
-                        "evidence": q.evidence,
-                    }
-                    if q.options:
-                        anchors["options"] = [
-                            {"label": opt.label, "description": opt.description}
-                            for opt in q.options
-                        ]
-                        anchors["multi_select"] = q.multi_select
-
-                    clarification = Clarification(
-                        attempt_id=attempt_id,
-                        question_id=f"q_{i}",
-                        question_text=q.question,
-                        question_context=q.why_needed,
-                        default_answer=q.proposed_default,
-                        anchors_json=anchors,
-                    )
-                    db.add(clarification)
-
             await db.commit()
 
             return summary

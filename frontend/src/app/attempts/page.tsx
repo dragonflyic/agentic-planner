@@ -6,10 +6,9 @@ import { api, AttemptWithSignal, PaginatedResponse } from "@/lib/api";
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-gray-100 text-gray-700",
   running: "bg-yellow-100 text-yellow-700",
-  success: "bg-green-100 text-green-700",
-  needs_human: "bg-orange-100 text-orange-700",
-  failed: "bg-red-100 text-red-700",
-  noop: "bg-gray-100 text-gray-500",
+  waiting: "bg-orange-100 text-orange-700",
+  complete: "bg-green-100 text-green-700",
+  error: "bg-red-100 text-red-700",
 };
 
 export default function AttemptsPage() {
@@ -81,10 +80,9 @@ export default function AttemptsPage() {
           <option value="">All Statuses</option>
           <option value="pending">Pending</option>
           <option value="running">Running</option>
-          <option value="success">Success</option>
-          <option value="needs_human">Needs Human</option>
-          <option value="failed">Failed</option>
-          <option value="noop">No-op</option>
+          <option value="waiting">Waiting</option>
+          <option value="complete">Complete</option>
+          <option value="error">Error</option>
         </select>
       </div>
 

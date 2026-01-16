@@ -111,7 +111,7 @@ export default function ClarificationsPage() {
                   </p>
                 </div>
                 <span className="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700">
-                  needs_human
+                  waiting
                 </span>
               </div>
 

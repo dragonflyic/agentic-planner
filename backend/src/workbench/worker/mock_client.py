@@ -221,9 +221,9 @@ def create_error_scenario() -> MockScenario:
 
 # Registry of available scenarios
 MOCK_SCENARIOS = {
-    "success": create_success_scenario,
+    "complete": create_success_scenario,
     "ask_user_question": create_ask_user_question_scenario,
-    "needs_human": create_ask_user_question_scenario,  # Alias
+    "waiting": create_ask_user_question_scenario,  # Alias
     "error": create_error_scenario,
 }
 

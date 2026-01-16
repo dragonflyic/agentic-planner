@@ -163,8 +163,8 @@ async def cancel_attempt(db: DbSession, attempt_id: UUID) -> Attempt:
             detail=f"Cannot cancel attempt in {attempt.status} status",
         )
 
-    # Mark as failed with cancellation message
-    attempt.status = AttemptStatus.FAILED
+    # Mark as error with cancellation message
+    attempt.status = AttemptStatus.ERROR
     attempt.error_message = "Cancelled by user"
     attempt.finished_at = datetime.now(timezone.utc)
 

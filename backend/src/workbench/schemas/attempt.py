@@ -73,13 +73,9 @@ class AttemptListParams(BaseModel):
 class AttemptOutput(BaseModel):
     """Structured output from an attempt."""
 
-    status: str  # SUCCESS | NEEDS_HUMAN | FAILED | NOOP
+    status: str  # pending | running | waiting | complete | error
     pr_url: str | None = None
     what_changed: list[str] = Field(default_factory=list)
     commands_run: list[str] = Field(default_factory=list)
-    checks: dict[str, Any] = Field(default_factory=dict)
-    questions: list[dict[str, Any]] = Field(default_factory=list)
-    assumptions: list[str] = Field(default_factory=list)
-    risk_flags: list[str] = Field(default_factory=list)
     error_message: str | None = None
     metrics: dict[str, Any] = Field(default_factory=dict)

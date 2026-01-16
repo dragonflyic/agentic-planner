@@ -22,10 +22,9 @@ class AttemptStatus(str, Enum):
 
     PENDING = "pending"  # Created but not started
     RUNNING = "running"  # Currently executing
-    SUCCESS = "success"  # Completed successfully with PR
-    NEEDS_HUMAN = "needs_human"  # Requires clarification
-    FAILED = "failed"  # Error during execution
-    NOOP = "noop"  # No changes needed/possible
+    WAITING = "waiting"  # Waiting for user response to questions
+    COMPLETE = "complete"  # Finished (with or without changes)
+    ERROR = "error"  # Unexpected error during execution
 
 
 class Attempt(Base, UUIDMixin, TimestampMixin):

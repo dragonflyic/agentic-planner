@@ -218,10 +218,9 @@ function ClarificationFormGroup({
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-gray-100 text-gray-700",
   running: "bg-yellow-100 text-yellow-700",
-  success: "bg-green-100 text-green-700",
-  needs_human: "bg-orange-100 text-orange-700",
-  failed: "bg-red-100 text-red-700",
-  noop: "bg-gray-100 text-gray-500",
+  waiting: "bg-orange-100 text-orange-700",
+  complete: "bg-green-100 text-green-700",
+  error: "bg-red-100 text-red-700",
 };
 
 function formatDuration(ms: number | null): string {
@@ -512,8 +511,8 @@ function AttemptDetailPanel({
           </div>
         )}
 
-        {/* Human Feedback Needed - show for needs_human OR running with pending clarifications */}
-        {(attempt.status === "needs_human" || attempt.status === "running") && clarifications.length > 0 && (
+        {/* Human Feedback Needed - show for waiting OR running with pending clarifications */}
+        {(attempt.status === "waiting" || attempt.status === "running") && clarifications.length > 0 && (
           <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-3">
             <p className="text-orange-700 dark:text-orange-400 font-medium text-sm mb-3">
               {attempt.status === "running" ? "Waiting for Input" : "Human Feedback Needed"} ({clarifications.filter(c => !c.is_answered).length} pending)
@@ -682,8 +681,8 @@ export default function WorkingSetPage() {
 
         setSelectedAttempt(attempt);
 
-        // Fetch clarifications for needs_human OR running attempts (bidirectional mode)
-        if (attempt.status === "needs_human" || attempt.status === "running") {
+        // Fetch clarifications for waiting OR running attempts (bidirectional mode)
+        if (attempt.status === "waiting" || attempt.status === "running") {
           const clars = await api.getAttemptClarifications(attempt.id);
           // Check again after async operation
           if (fetchIdRef.current !== currentFetchId) return;
@@ -720,8 +719,8 @@ export default function WorkingSetPage() {
       if (fetchIdRef.current !== currentFetchId) return;
       setSelectedAttempt(attempt);
 
-      // Fetch clarifications for needs_human OR running attempts (bidirectional mode)
-      if (attempt.status === "needs_human" || attempt.status === "running") {
+      // Fetch clarifications for waiting OR running attempts (bidirectional mode)
+      if (attempt.status === "waiting" || attempt.status === "running") {
         const clars = await api.getAttemptClarifications(attempt.id);
         if (fetchIdRef.current !== currentFetchId) return;
         setClarifications(clars);
@@ -756,8 +755,8 @@ export default function WorkingSetPage() {
           setSignals(data.items);
         }
 
-        // Always fetch clarifications while running (bidirectional mode) or when finished as needs_human
-        if (updated.status === "running" || updated.status === "needs_human") {
+        // Always fetch clarifications while running (bidirectional mode) or when finished as waiting
+        if (updated.status === "running" || updated.status === "waiting") {
           const clars = await api.getAttemptClarifications(updated.id);
           setClarifications(clars);
         } else if (updated.status !== "pending") {

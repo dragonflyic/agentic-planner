@@ -7,10 +7,9 @@ import { api, SignalWithStatus, Attempt } from "@/lib/api";
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-gray-100 text-gray-700",
   running: "bg-yellow-100 text-yellow-700",
-  success: "bg-green-100 text-green-700",
-  needs_human: "bg-orange-100 text-orange-700",
-  failed: "bg-red-100 text-red-700",
-  noop: "bg-gray-100 text-gray-500",
+  waiting: "bg-orange-100 text-orange-700",
+  complete: "bg-green-100 text-green-700",
+  error: "bg-red-100 text-red-700",
 };
 
 export default function SignalDetailPage() {

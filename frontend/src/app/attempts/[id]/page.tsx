@@ -8,10 +8,9 @@ import { LogViewer } from "@/components/LogViewer";
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-gray-100 text-gray-700",
   running: "bg-yellow-100 text-yellow-700",
-  success: "bg-green-100 text-green-700",
-  needs_human: "bg-orange-100 text-orange-700",
-  failed: "bg-red-100 text-red-700",
-  noop: "bg-gray-100 text-gray-500",
+  waiting: "bg-orange-100 text-orange-700",
+  complete: "bg-green-100 text-green-700",
+  error: "bg-red-100 text-red-700",
 };
 
 export default function AttemptDetailPage() {
@@ -30,8 +29,8 @@ export default function AttemptDetailPage() {
         const data = await api.getAttempt(attemptId);
         setAttempt(data);
 
-        // Fetch clarifications if status is needs_human
-        if (data.status === "needs_human") {
+        // Fetch clarifications if status is waiting
+        if (data.status === "waiting") {
           const clars = await api.getAttemptClarifications(attemptId);
           setClarifications(clars);
         }
@@ -161,7 +160,7 @@ export default function AttemptDetailPage() {
       )}
 
       {/* Human Feedback Needed */}
-      {attempt.status === "needs_human" && clarifications.length > 0 && (
+      {attempt.status === "waiting" && clarifications.length > 0 && (
         <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-4 mb-6">
           <p className="text-orange-700 dark:text-orange-400 font-medium mb-3">
             Human Feedback Needed
