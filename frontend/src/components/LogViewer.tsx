@@ -55,32 +55,71 @@ function TruncatedText({ text, maxLength = 500 }: { text: string; maxLength?: nu
   );
 }
 
+// Format a value for display - handles objects, arrays, and primitives
+function formatDetailValue(v: unknown): string {
+  if (v === null || v === undefined) return String(v);
+  if (typeof v === "object") {
+    // For objects/arrays, show a compact JSON representation
+    const json = JSON.stringify(v);
+    // Truncate if too long
+    return json.length > 100 ? json.slice(0, 100) + "..." : json;
+  }
+  return String(v);
+}
+
 // Event card component for timeline events
 function EventCard({ entry, sequenceNum }: { entry: any; sequenceNum: number }) {
+  const [showDetails, setShowDetails] = useState(false);
   const eventIcons: Record<string, string> = {
     attempt_started: "🚀",
     cloning_repo: "📥",
     workspace_ready: "📁",
     execution_starting: "⚡",
     execution_complete: "✅",
+    waiting_for_human: "⏳",
+    human_answered: "✅",
   };
 
+  // Check if details has complex objects worth expanding
+  const hasComplexDetails = entry.details && Object.values(entry.details).some(
+    (v) => typeof v === "object" && v !== null
+  );
+
   return (
-    <div className="flex items-center gap-3 py-2 px-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
-      <span className="text-lg">{eventIcons[entry.event] || "📌"}</span>
-      <div className="flex-1">
-        <span className="text-sm text-gray-700 dark:text-gray-300">{entry.message}</span>
-        {entry.details && (
-          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-            {Object.entries(entry.details).map(([k, v]) => (
-              <span key={k} className="mr-3">
-                {k}: <span className="font-mono">{String(v)}</span>
-              </span>
-            ))}
-          </div>
-        )}
+    <div className="py-2 px-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+      <div className="flex items-center gap-3">
+        <span className="text-lg">{eventIcons[entry.event] || "📌"}</span>
+        <div className="flex-1">
+          <span className="text-sm text-gray-700 dark:text-gray-300">{entry.message}</span>
+          {entry.details && !hasComplexDetails && (
+            <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              {Object.entries(entry.details).map(([k, v]) => (
+                <span key={k} className="mr-3">
+                  {k}: <span className="font-mono">{formatDetailValue(v)}</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {hasComplexDetails && (
+            <button
+              onClick={() => setShowDetails(!showDetails)}
+              className="text-xs text-blue-500 hover:text-blue-600"
+            >
+              {showDetails ? "Hide details" : "Show details"}
+            </button>
+          )}
+          <span className="text-xs text-gray-400">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+        </div>
       </div>
-      <span className="text-xs text-gray-400">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+      {showDetails && entry.details && (
+        <div className="mt-2 p-2 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
+          <pre className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap overflow-x-auto">
+            {JSON.stringify(entry.details, null, 2)}
+          </pre>
+        </div>
+      )}
     </div>
   );
 }

@@ -18,6 +18,11 @@ from claude_code_sdk import (
     ToolUseBlock,
     UserMessage,
 )
+from claude_code_sdk.types import (
+    PermissionResultAllow,
+    PermissionResultDeny,
+    ToolPermissionContext,
+)
 
 # Type for log callback: async function that takes (sequence_num, log_entry_dict, is_final)
 LogCallback = Callable[[int, dict[str, Any], bool], Awaitable[None]]
@@ -195,7 +200,10 @@ At the end, provide a structured spec that includes:
 
         return "\n".join(parts)
 
-    def _build_options(self) -> ClaudeCodeOptions:
+    def _build_options(
+        self,
+        can_use_tool: Callable[[str, dict[str, Any], ToolPermissionContext], Awaitable[PermissionResultAllow | PermissionResultDeny]] | None = None,
+    ) -> ClaudeCodeOptions:
         """Build Claude Code SDK options."""
         return ClaudeCodeOptions(
             max_turns=self.max_turns,
@@ -203,6 +211,7 @@ At the end, provide a structured spec that includes:
             allowed_tools=self.allowed_tools,
             disallowed_tools=self.disallowed_tools,
             permission_mode="bypassPermissions",
+            can_use_tool=can_use_tool,
         )
 
     async def execute(
@@ -232,7 +241,6 @@ At the end, provide a structured spec that includes:
         Returns the execution result with parsed output and metrics.
         """
         prompt = self._build_prompt(signal)
-        options = self._build_options()
 
         self._cancelled = False
         final_text_parts: list[str] = []
@@ -243,13 +251,120 @@ At the end, provide a structured spec that includes:
         budget_exceeded = False
         interrupted_for_questions = False
         sequence_num = 0
+        # Lock to serialize database operations (control handler runs concurrently)
+        db_lock = asyncio.Lock()
 
         async def write_log(log_entry: dict[str, Any], is_final: bool = False) -> None:
             """Write a log entry if callback is provided."""
             nonlocal sequence_num
             if log_callback:
-                sequence_num += 1
-                await log_callback(sequence_num, log_entry, is_final)
+                async with db_lock:
+                    sequence_num += 1
+                    await log_callback(sequence_num, log_entry, is_final)
+
+        # Create can_use_tool callback for handling AskUserQuestion
+        async def can_use_tool_handler(
+            tool_name: str,
+            input_data: dict[str, Any],
+            context: ToolPermissionContext,
+        ) -> PermissionResultAllow | PermissionResultDeny:
+            """Handle tool permission requests, especially AskUserQuestion."""
+            nonlocal questions_asked, interrupted_for_questions
+
+            if tool_name == "AskUserQuestion":
+                print(f"[DEBUG] can_use_tool: AskUserQuestion detected!")
+                print(f"[DEBUG] can_use_tool input_data: {input_data}")
+
+                questions_list = input_data.get("questions", [])
+                current_questions = {
+                    "id": f"auq_{len(questions_asked)}",  # Generate unique ID
+                    "questions": questions_list,
+                }
+                questions_asked.append(current_questions)
+
+                # If we have callbacks for bidirectional mode, poll for answers
+                if on_questions_asked and poll_for_answers:
+                    # Build a readable summary of questions for the log
+                    question_texts = [q.get("question", "?")[:80] for q in questions_list]
+                    questions_summary = "; ".join(question_texts)
+                    await write_log({
+                        "type": "event",
+                        "timestamp": datetime.now(UTC).isoformat(),
+                        "event": "waiting_for_human",
+                        "message": f"Waiting for human input on {len(questions_list)} question(s): {questions_summary}",
+                        "details": {"questions_count": len(questions_list), "questions": questions_list},
+                    })
+
+                    # Save questions to DB (with lock to avoid concurrent commits)
+                    async with db_lock:
+                        await on_questions_asked([current_questions])
+                    print(f"[DEBUG] Questions saved, polling for answers...")
+
+                    # Poll for answers
+                    answers = None
+                    while answers is None:
+                        await asyncio.sleep(answer_poll_interval)
+                        async with db_lock:
+                            answers = await poll_for_answers()
+                        if answers is None:
+                            print(f"[DEBUG] Answers not ready, polling again in {answer_poll_interval}s...")
+
+                    print(f"[DEBUG] Got answers: {answers}")
+
+                    # Build a readable summary of answers for the log message
+                    answer_summary = "; ".join(
+                        f"{qid}: {ans[:50]}{'...' if len(ans) > 50 else ''}"
+                        for qid, ans in answers.items()
+                    )
+                    await write_log({
+                        "type": "event",
+                        "timestamp": datetime.now(UTC).isoformat(),
+                        "event": "human_answered",
+                        "message": f"Human provided {len(answers)} answer(s): {answer_summary}",
+                        "details": {"answers": answers},
+                    })
+
+                    # Build the answers in the format expected by AskUserQuestion tool
+                    # The answers dict maps question_id to answer (e.g., "auq_0_0" -> "answer text")
+                    # We need to map question TEXT to answer for the SDK
+                    formatted_answers = {}
+                    tool_id = current_questions["id"]  # e.g., "auq_0"
+                    for i, q in enumerate(questions_list):
+                        q_text = q.get("question", "")
+                        question_id = f"{tool_id}_{i}"  # e.g., "auq_0_0"
+                        if question_id in answers:
+                            formatted_answers[q_text] = answers[question_id]
+                            print(f"[DEBUG] Mapped {question_id} -> '{q_text[:50]}...' = '{answers[question_id]}'")
+                        else:
+                            print(f"[DEBUG] No answer found for question_id {question_id}")
+
+                    print(f"[DEBUG] Formatted answers for SDK: {formatted_answers}")
+
+                    # Return answers in the proper format per docs
+                    return PermissionResultAllow(
+                        behavior="allow",
+                        updated_input={
+                            "questions": questions_list,
+                            "answers": formatted_answers,
+                        },
+                    )
+                else:
+                    # No callbacks - deny and interrupt (old behavior)
+                    interrupted_for_questions = True
+                    return PermissionResultDeny(
+                        behavior="deny",
+                        message="AskUserQuestion requires human input but no callback provided",
+                        interrupt=True,
+                    )
+
+            # For all other tools, allow with original input (bypass mode)
+            return PermissionResultAllow(
+                behavior="allow",
+                updated_input=input_data,
+            )
+
+        # Build options with the can_use_tool callback
+        options = self._build_options(can_use_tool=can_use_tool_handler if (on_questions_asked and poll_for_answers) else None)
 
         # Use mock client if scenario is specified (for testing)
         if self._mock_scenario:
@@ -303,85 +418,8 @@ At the end, provide a structured spec that includes:
                                     if cmd:
                                         self.metrics.commands_run.append(cmd)
 
-                                # Detect AskUserQuestion - poll for answers instead of interrupting
-                                if block.name == "AskUserQuestion":
-                                    question_data = block.input if isinstance(block.input, dict) else {}
-                                    print(f"[DEBUG] AskUserQuestion detected!")
-                                    print(f"[DEBUG] block.input: {block.input}")
-
-                                    current_questions = {
-                                        "id": block.id,
-                                        "questions": question_data.get("questions", []),
-                                    }
-                                    questions_asked.append(current_questions)
-
-                                    # Write the log for the assistant message
-                                    await write_log({
-                                        "type": "assistant",
-                                        "timestamp": datetime.now(UTC).isoformat(),
-                                        "turn": self.metrics.turn_count,
-                                        "content": {
-                                            "text": "\n".join(text_parts) if text_parts else None,
-                                            "tool_calls": tool_calls,
-                                        },
-                                    })
-
-                                    # If we have callbacks for bidirectional mode, poll for answers
-                                    if on_questions_asked and poll_for_answers:
-                                        # Save questions to DB
-                                        await write_log({
-                                            "type": "event",
-                                            "timestamp": datetime.now(UTC).isoformat(),
-                                            "event": "waiting_for_human",
-                                            "message": f"Waiting for human input on {len(current_questions['questions'])} question(s)",
-                                            "details": {"questions_count": len(current_questions['questions'])},
-                                        })
-
-                                        clarification_mapping = await on_questions_asked(questions_asked)
-                                        print(f"[DEBUG] Questions saved, polling for answers...")
-
-                                        # Poll for answers
-                                        answers = None
-                                        while answers is None:
-                                            await asyncio.sleep(answer_poll_interval)
-                                            answers = await poll_for_answers()
-                                            if answers is None:
-                                                print(f"[DEBUG] Answers not ready, polling again in {answer_poll_interval}s...")
-
-                                        print(f"[DEBUG] Got answers: {answers}")
-
-                                        # Format answers as a user message to send back
-                                        answer_parts = ["Here are the answers to your questions:\n"]
-                                        for q_id, answer in answers.items():
-                                            answer_parts.append(f"- {q_id}: {answer}")
-                                        answer_message = "\n".join(answer_parts)
-
-                                        await write_log({
-                                            "type": "event",
-                                            "timestamp": datetime.now(UTC).isoformat(),
-                                            "event": "human_answered",
-                                            "message": "Human provided answers, continuing execution",
-                                            "details": {"answers": answers},
-                                        })
-
-                                        # Send the answer back to Claude and continue
-                                        await client.query(answer_message)
-                                        print(f"[DEBUG] Sent answers to Claude, continuing...")
-                                        # Don't break - continue processing messages
-                                    else:
-                                        # No callbacks - fall back to interrupt mode
-                                        await write_log({
-                                            "type": "interrupted",
-                                            "timestamp": datetime.now(UTC).isoformat(),
-                                            "content": {
-                                                "reason": "AskUserQuestion called - waiting for human input",
-                                                "questions_count": len(questions_asked),
-                                            },
-                                        }, is_final=True)
-
-                                        await client.interrupt()
-                                        interrupted_for_questions = True
-                                        break
+                                # Note: AskUserQuestion is now handled via can_use_tool callback
+                                # The callback saves questions, polls for answers, and returns them properly
 
                                 # Check tool call budget
                                 if self.metrics.tool_call_count >= self.max_tool_calls:

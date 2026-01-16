@@ -117,20 +117,28 @@ class OutcomeClassifier:
         # Do this BEFORE checking success - questions don't mean failure
         questions = self._extract_questions_from_result(execution_result)
 
-        # Check for implicit stuck patterns
-        implicit_stuck = self._detect_stuck_patterns(all_text)
-        if implicit_stuck and not questions:
-            questions = implicit_stuck
-
-        # If we have questions, it's NEEDS_HUMAN (regardless of execution success)
+        # If we have EXPLICIT questions (from AskUserQuestion), it's NEEDS_HUMAN
         if questions:
-            print(f"[DEBUG] Returning NEEDS_HUMAN with {len(questions)} questions")
+            print(f"[DEBUG] Returning NEEDS_HUMAN with {len(questions)} explicit questions")
             return ClassificationResult(
                 status=AttemptStatus.NEEDS_HUMAN,
                 questions=questions,
                 assumptions=self._extract_assumptions(all_text),
                 what_changed=diff_stats.files_touched or [],
             )
+
+        # Check for implicit stuck patterns ONLY if no work was done
+        # (avoids false positives from phrases like "I'm not sure if this is ideal but...")
+        if diff_stats.files_count == 0 and execution_result.success:
+            implicit_stuck = self._detect_stuck_patterns(all_text)
+            if implicit_stuck:
+                print(f"[DEBUG] Returning NEEDS_HUMAN with {len(implicit_stuck)} implicit questions (no changes made)")
+                return ClassificationResult(
+                    status=AttemptStatus.NEEDS_HUMAN,
+                    questions=implicit_stuck,
+                    assumptions=self._extract_assumptions(all_text),
+                    what_changed=[],
+                )
 
         print(f"[DEBUG] No questions found, continuing classification...")
 
