@@ -29,12 +29,10 @@ export default function WorkingSetPage() {
 
       setLoading(true);
       try {
-        // Fetch all signals and filter to working set
-        const data = await api.listSignals({ page_size: 100 });
-        const workingSetSignals = data.items.filter((s) => workingSet.has(s.id));
-        // Sort by priority descending
-        workingSetSignals.sort((a, b) => b.priority - a.priority);
-        setSignals(workingSetSignals);
+        // Fetch only the signals that are in the working set
+        const ids = Array.from(workingSet);
+        const data = await api.listSignals({ ids, page_size: ids.length, sort_by: "priority", sort_order: "desc" });
+        setSignals(data.items);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setError(message || "Failed to fetch signals");
@@ -49,10 +47,9 @@ export default function WorkingSetPage() {
     try {
       await api.createAttempt(signalId);
       // Refresh the list
-      const data = await api.listSignals({ page_size: 100 });
-      const workingSetSignals = data.items.filter((s) => workingSet.has(s.id));
-      workingSetSignals.sort((a, b) => b.priority - a.priority);
-      setSignals(workingSetSignals);
+      const ids = Array.from(workingSet);
+      const data = await api.listSignals({ ids, page_size: ids.length, sort_by: "priority", sort_order: "desc" });
+      setSignals(data.items);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to create attempt");
     }

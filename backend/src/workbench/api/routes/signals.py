@@ -27,6 +27,7 @@ async def list_signals(
     db: DbSession,
     repo: str | None = None,
     search: str | None = None,
+    ids: str | None = Query(None, description="Comma-separated list of signal IDs to filter by"),
     sort_by: str = Query("created_at", pattern="^(created_at|updated_at|priority)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -39,6 +40,14 @@ async def list_signals(
     )
 
     # Apply filters
+    if ids:
+        # Parse comma-separated IDs and filter
+        try:
+            id_list = [UUID(id_str.strip()) for id_str in ids.split(",") if id_str.strip()]
+            if id_list:
+                query = query.where(Signal.id.in_(id_list))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid ID format in ids parameter")
     if repo:
         query = query.where(Signal.repo.ilike(f"%{repo}%"))
     if search:
