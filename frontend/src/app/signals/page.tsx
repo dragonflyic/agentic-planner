@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, PaginatedResponse, SignalWithStatus } from "@/lib/api";
+import { useWorkingSet } from "@/contexts/WorkingSetContext";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-gray-100 text-gray-700",
@@ -21,6 +22,7 @@ export default function SignalsPage() {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState(false);
+  const { isInWorkingSet, toggleWorkingSet, workingSet } = useWorkingSet();
 
   const pageSize = expanded ? EXPANDED_PAGE_SIZE : DEFAULT_PAGE_SIZE;
 
@@ -89,11 +91,29 @@ export default function SignalsPage() {
         </div>
       </div>
 
+      {/* Working Set Info Bar */}
+      {workingSet.size > 0 && (
+        <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg flex items-center justify-between">
+          <span className="text-sm text-blue-700 dark:text-blue-300">
+            {workingSet.size} signal{workingSet.size !== 1 ? "s" : ""} in working set
+          </span>
+          <a
+            href="/working-set"
+            className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+          >
+            View Working Set
+          </a>
+        </div>
+      )}
+
       {/* Signals Table */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
           <thead className="bg-gray-50 dark:bg-gray-700">
             <tr>
+              <th className="px-6 py-3 w-12">
+                <span className="sr-only">Select</span>
+              </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                 Priority
               </th>
@@ -111,6 +131,14 @@ export default function SignalsPage() {
           <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
             {signals?.items.map((signal, index) => (
               <tr key={signal.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                <td className="px-6 py-4">
+                  <input
+                    type="checkbox"
+                    checked={isInWorkingSet(signal.id)}
+                    onChange={() => toggleWorkingSet(signal.id)}
+                    className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                  />
+                </td>
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-2">
                     <span className="text-lg font-bold text-gray-400 dark:text-gray-500 w-6">
@@ -187,7 +215,7 @@ export default function SignalsPage() {
             {signals?.items.length === 0 && (
               <tr>
                 <td
-                  colSpan={4}
+                  colSpan={5}
                   className="px-6 py-8 text-center text-gray-500 dark:text-gray-400"
                 >
                   No signals found

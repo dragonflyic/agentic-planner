@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ClientProviders } from "@/components/ClientProviders";
 
 export const metadata: Metadata = {
   title: "Signal-to-Attempt Workbench",
@@ -14,6 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen bg-gray-50 dark:bg-gray-900">
+        <ClientProviders>
         <div className="flex min-h-screen">
           {/* Sidebar */}
           <aside className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700">
@@ -39,6 +41,12 @@ export default function RootLayout({
                 Signals
               </a>
               <a
+                href="/working-set"
+                className="flex items-center px-4 py-2 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+              >
+                Working Set
+              </a>
+              <a
                 href="/attempts"
                 className="flex items-center px-4 py-2 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >
@@ -56,6 +64,7 @@ export default function RootLayout({
           {/* Main content */}
           <main className="flex-1 p-8">{children}</main>
         </div>
+        </ClientProviders>
       </body>
     </html>
   );
