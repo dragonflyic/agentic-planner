@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from workbench.api.deps import DbSession
-from workbench.models import Attempt, JobType, Signal, SignalState
+from workbench.models import Attempt, JobType, Signal
 from workbench.schemas import (
     GitHubSyncRequest,
     GitHubSyncResponse,
@@ -25,7 +25,6 @@ router = APIRouter()
 @router.get("/", response_model=PaginatedResponse[SignalWithStatus])
 async def list_signals(
     db: DbSession,
-    state: SignalState | None = None,
     repo: str | None = None,
     search: str | None = None,
     sort_by: str = Query("created_at", pattern="^(created_at|updated_at|priority)$"),
@@ -40,8 +39,6 @@ async def list_signals(
     )
 
     # Apply filters
-    if state:
-        query = query.where(Signal.state == state)
     if repo:
         query = query.where(Signal.repo.ilike(f"%{repo}%"))
     if search:
@@ -91,7 +88,6 @@ async def list_signals(
                 body=signal.body,
                 metadata_json=signal.metadata_json,
                 project_fields_json=signal.project_fields_json,
-                state=signal.state,
                 priority=signal.priority,
                 created_at=signal.created_at,
                 updated_at=signal.updated_at,
@@ -140,7 +136,6 @@ async def get_signal(db: DbSession, signal_id: UUID) -> SignalWithStatus:
         body=signal.body,
         metadata_json=signal.metadata_json,
         project_fields_json=signal.project_fields_json,
-        state=signal.state,
         priority=signal.priority,
         created_at=signal.created_at,
         updated_at=signal.updated_at,
@@ -241,26 +236,6 @@ async def update_signal(
     update_data = signal_in.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(signal, field, value)
-
-    await db.flush()
-    await db.refresh(signal)
-    return signal
-
-
-@router.post("/{signal_id}/queue", response_model=SignalSchema)
-async def queue_signal(
-    db: DbSession, signal_id: UUID, priority: int = Query(0)
-) -> Signal:
-    """Move signal to queued state, ready for processing."""
-    query = select(Signal).where(Signal.id == signal_id)
-    result = await db.execute(query)
-    signal = result.scalar_one_or_none()
-
-    if not signal:
-        raise HTTPException(status_code=404, detail="Signal not found")
-
-    signal.state = SignalState.QUEUED
-    signal.priority = priority
 
     await db.flush()
     await db.refresh(signal)

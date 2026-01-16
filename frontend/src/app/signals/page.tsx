@@ -3,16 +3,6 @@
 import { useEffect, useState } from "react";
 import { api, PaginatedResponse, SignalWithStatus } from "@/lib/api";
 
-const STATE_COLORS: Record<string, string> = {
-  pending: "bg-gray-100 text-gray-700",
-  queued: "bg-blue-100 text-blue-700",
-  in_progress: "bg-yellow-100 text-yellow-700",
-  completed: "bg-green-100 text-green-700",
-  blocked: "bg-red-100 text-red-700",
-  skipped: "bg-gray-100 text-gray-500",
-  archived: "bg-gray-100 text-gray-400",
-};
-
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-gray-100 text-gray-700",
   running: "bg-yellow-100 text-yellow-700",
@@ -29,7 +19,6 @@ export default function SignalsPage() {
   const [signals, setSignals] = useState<PaginatedResponse<SignalWithStatus> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [stateFilter, setStateFilter] = useState<string>("");
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState(false);
 
@@ -40,7 +29,6 @@ export default function SignalsPage() {
       setLoading(true);
       try {
         const data = await api.listSignals({
-          state: stateFilter || undefined,
           page,
           page_size: pageSize,
           sort_by: "priority",
@@ -54,14 +42,13 @@ export default function SignalsPage() {
       }
     }
     fetchSignals();
-  }, [stateFilter, page, pageSize]);
+  }, [page, pageSize]);
 
   async function handleRunAttempt(signalId: string) {
     try {
       await api.createAttempt(signalId);
       // Refresh the list
       const data = await api.listSignals({
-        state: stateFilter || undefined,
         page,
         page_size: pageSize,
         sort_by: "priority",
@@ -100,21 +87,6 @@ export default function SignalsPage() {
             Showing top {signals?.items.length || 0} of {signals?.total || 0} signals by priority
           </p>
         </div>
-        <select
-          value={stateFilter}
-          onChange={(e) => {
-            setStateFilter(e.target.value);
-            setPage(1);
-          }}
-          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-        >
-          <option value="">All States</option>
-          <option value="pending">Pending</option>
-          <option value="queued">Queued</option>
-          <option value="in_progress">In Progress</option>
-          <option value="completed">Completed</option>
-          <option value="blocked">Blocked</option>
-        </select>
       </div>
 
       {/* Signals Table */}
@@ -127,9 +99,6 @@ export default function SignalsPage() {
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                 Signal
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                State
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                 Latest Attempt
@@ -174,15 +143,6 @@ export default function SignalsPage() {
                   </div>
                 </td>
                 <td className="px-6 py-4">
-                  <span
-                    className={`px-2 py-1 text-xs font-medium rounded-full ${
-                      STATE_COLORS[signal.state] || STATE_COLORS.pending
-                    }`}
-                  >
-                    {signal.state}
-                  </span>
-                </td>
-                <td className="px-6 py-4">
                   {signal.latest_attempt_status ? (
                     <div>
                       <span
@@ -216,7 +176,7 @@ export default function SignalsPage() {
                 <td className="px-6 py-4">
                   <button
                     onClick={() => handleRunAttempt(signal.id)}
-                    disabled={signal.state === "in_progress"}
+                    disabled={signal.latest_attempt_status === "running" || signal.latest_attempt_status === "pending"}
                     className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Run Attempt
@@ -227,7 +187,7 @@ export default function SignalsPage() {
             {signals?.items.length === 0 && (
               <tr>
                 <td
-                  colSpan={5}
+                  colSpan={4}
                   className="px-6 py-8 text-center text-gray-500 dark:text-gray-400"
                 >
                   No signals found

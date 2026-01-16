@@ -41,7 +41,6 @@ def upgrade() -> None:
             nullable=False,
             server_default="{}",
         ),
-        sa.Column("state", sa.String(20), nullable=False, server_default="pending"),
         sa.Column("priority", sa.Integer(), nullable=False, server_default="0"),
         sa.Column(
             "created_at",
@@ -59,7 +58,6 @@ def upgrade() -> None:
         sa.UniqueConstraint("repo", "issue_number", name="uq_signals_repo_issue"),
     )
     op.create_index("ix_signals_repo", "signals", ["repo"])
-    op.create_index("ix_signals_state", "signals", ["state"])
     op.create_index("ix_signals_external_id", "signals", ["external_id"])
 
     # Attempts table

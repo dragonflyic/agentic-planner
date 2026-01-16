@@ -8,7 +8,6 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from workbench.models.signal import SignalState
 from workbench.models.attempt import AttemptStatus
 
 
@@ -34,7 +33,6 @@ class SignalCreate(SignalBase):
 class SignalUpdate(BaseModel):
     """Request body for updating a signal."""
 
-    state: SignalState | None = None
     priority: int | None = None
     title: str | None = None
     body: str | None = None
@@ -49,7 +47,6 @@ class Signal(SignalBase):
 
     id: UUID
     external_id: str | None = None
-    state: SignalState
     priority: int
     created_at: datetime
     updated_at: datetime
@@ -74,8 +71,6 @@ class SignalWithStatus(Signal):
 class SignalListParams(BaseModel):
     """Query parameters for listing signals."""
 
-    state: SignalState | None = None
-    states: list[SignalState] | None = None
     repo: str | None = None
     search: str | None = Field(None, description="Search in title/body")
     sort_by: str = Field(default="created_at", pattern="^(created_at|updated_at|priority)$")

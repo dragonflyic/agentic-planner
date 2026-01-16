@@ -4,16 +4,6 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api, SignalWithStatus, Attempt } from "@/lib/api";
 
-const STATE_COLORS: Record<string, string> = {
-  pending: "bg-gray-100 text-gray-700",
-  queued: "bg-blue-100 text-blue-700",
-  in_progress: "bg-yellow-100 text-yellow-700",
-  completed: "bg-green-100 text-green-700",
-  blocked: "bg-red-100 text-red-700",
-  skipped: "bg-gray-100 text-gray-500",
-  archived: "bg-gray-100 text-gray-400",
-};
-
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-gray-100 text-gray-700",
   running: "bg-yellow-100 text-yellow-700",
@@ -89,13 +79,15 @@ export default function SignalDetailPage() {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
             {signal.title}
           </h1>
-          <span
-            className={`px-2 py-1 text-xs font-medium rounded-full ${
-              STATE_COLORS[signal.state] || STATE_COLORS.pending
-            }`}
-          >
-            {signal.state}
-          </span>
+          {signal.latest_attempt_status && (
+            <span
+              className={`px-2 py-1 text-xs font-medium rounded-full ${
+                STATUS_COLORS[signal.latest_attempt_status] || STATUS_COLORS.pending
+              }`}
+            >
+              {signal.latest_attempt_status}
+            </span>
+          )}
         </div>
         <p className="text-gray-500 dark:text-gray-400">
           <a
@@ -113,7 +105,7 @@ export default function SignalDetailPage() {
       <div className="mb-6">
         <button
           onClick={handleRunAttempt}
-          disabled={signal.state === "in_progress"}
+          disabled={signal.latest_attempt_status === "running" || signal.latest_attempt_status === "pending"}
           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Run New Attempt

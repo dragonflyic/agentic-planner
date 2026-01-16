@@ -1,6 +1,5 @@
 """Signal model - represents a work candidate from GitHub."""
 
-from enum import Enum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -12,18 +11,6 @@ from workbench.models.base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
     from workbench.models.attempt import Attempt
-
-
-class SignalState(str, Enum):
-    """Signal state in the workflow."""
-
-    PENDING = "pending"  # Newly synced, awaiting triage
-    QUEUED = "queued"  # Ready for processing
-    IN_PROGRESS = "in_progress"  # Currently being attempted
-    COMPLETED = "completed"  # Successfully resolved
-    BLOCKED = "blocked"  # Needs human intervention
-    SKIPPED = "skipped"  # Marked as not worth attempting
-    ARCHIVED = "archived"  # Historical record
 
 
 class Signal(Base, UUIDMixin, TimestampMixin):
@@ -52,10 +39,7 @@ class Signal(Base, UUIDMixin, TimestampMixin):
         JSONB, default=dict, server_default="{}"
     )
 
-    # State management
-    state: Mapped[SignalState] = mapped_column(
-        String(20), default=SignalState.PENDING, nullable=False, index=True
-    )
+    # Priority for ordering work
     priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # Relationships

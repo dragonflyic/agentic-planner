@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from workbench.models import Signal, SignalState
+from workbench.models import Signal
 from workbench.services.github_client import GitHubGraphQLClient, ProjectItem
 from workbench.services.prioritization import calculate_signal_priority
 
@@ -195,11 +195,10 @@ class GitHubSyncService:
             body=item.body,
             metadata_json=metadata,
             project_fields_json=item.field_values,
-            state=SignalState.PENDING,
             priority=priority,
         )
 
-        # On conflict, update existing record but preserve workflow state
+        # On conflict, update existing record
         stmt = stmt.on_conflict_do_update(
             constraint="uq_signals_repo_issue",
             set_={
@@ -209,7 +208,6 @@ class GitHubSyncService:
                 "project_fields_json": stmt.excluded.project_fields_json,
                 "priority": stmt.excluded.priority,  # Always recalculate priority
                 "updated_at": datetime.now(timezone.utc),
-                # Don't update state - preserve workflow state
             },
         )
 

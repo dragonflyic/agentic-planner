@@ -142,9 +142,6 @@ async def create_attempt(db: DbSession, attempt_in: AttemptCreate) -> Attempt:
     )
     db.add(job)
 
-    # Update signal state
-    signal.state = "in_progress"
-
     await db.flush()
     await db.refresh(attempt)
     return attempt

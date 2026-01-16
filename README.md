@@ -81,13 +81,6 @@ Once the backend is running, visit:
 
 ## Key Concepts
 
-### Signal States
-- `pending` - Newly synced, awaiting triage
-- `queued` - Ready for processing
-- `in_progress` - Currently being attempted
-- `completed` - Successfully resolved
-- `blocked` - Needs human intervention
-
 ### Attempt Statuses
 - `pending` - Created but not started
 - `running` - Currently executing

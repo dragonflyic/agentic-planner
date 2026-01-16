@@ -199,9 +199,6 @@ async def retry_with_clarification(
     )
     db.add(job)
 
-    # Update signal state
-    signal.state = "in_progress"
-
     await db.flush()
     await db.refresh(new_attempt)
     return new_attempt
