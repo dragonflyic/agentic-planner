@@ -84,7 +84,7 @@ class OutcomeClassifier:
 
         Returns a ClassificationResult with status and details.
         """
-        # Handle timeout/error cases first
+        # Handle timeout/budget cases first (hard failures)
         if execution_result.timed_out:
             return ClassificationResult(
                 status=AttemptStatus.FAILED,
@@ -99,18 +99,11 @@ class OutcomeClassifier:
                 risk_flags=["BUDGET_EXCEEDED"],
             )
 
-        if not execution_result.success:
-            error_msg = execution_result.output.get("error", "Unknown error")
-            return ClassificationResult(
-                status=AttemptStatus.FAILED,
-                error_message=f"Execution failed: {error_msg}",
-                risk_flags=["EXECUTION_ERROR"],
-            )
-
         # Extract text content for analysis
         all_text = execution_result.final_text or self._extract_all_text(execution_result.output)
 
-        # Check for AskUserQuestion tool calls (explicit stuck)
+        # Check for AskUserQuestion tool calls (explicit questions)
+        # Do this BEFORE checking success - questions don't mean failure
         questions = self._extract_questions_from_result(execution_result)
 
         # Check for implicit stuck patterns
@@ -118,13 +111,22 @@ class OutcomeClassifier:
         if implicit_stuck and not questions:
             questions = implicit_stuck
 
-        # If we have questions, it's NEEDS_HUMAN
+        # If we have questions, it's NEEDS_HUMAN (regardless of execution success)
         if questions:
             return ClassificationResult(
                 status=AttemptStatus.NEEDS_HUMAN,
                 questions=questions,
                 assumptions=self._extract_assumptions(all_text),
                 what_changed=diff_stats.files_touched or [],
+            )
+
+        # Now check for execution errors (after questions, since questions aren't errors)
+        if not execution_result.success:
+            error_msg = execution_result.output.get("error", "Unknown error")
+            return ClassificationResult(
+                status=AttemptStatus.FAILED,
+                error_message=f"Execution failed: {error_msg}",
+                risk_flags=["EXECUTION_ERROR"],
             )
 
         # Check for PR creation

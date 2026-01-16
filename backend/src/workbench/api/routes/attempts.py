@@ -1,14 +1,18 @@
 """Attempt management API routes."""
 
+import asyncio
 from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
+from sse_starlette.sse import EventSourceResponse
 
 from workbench.api.deps import DbSession
-from workbench.models import Attempt, AttemptStatus, Job, JobStatus, JobType, Signal
+from workbench.db.session import AsyncSessionLocal
+from workbench.models import Artifact, ArtifactType, Attempt, AttemptStatus, Job, JobStatus, JobType, Signal
 from workbench.schemas import (
     Attempt as AttemptSchema,
     AttemptCreate,
@@ -126,10 +130,13 @@ async def create_attempt(db: DbSession, attempt_in: AttemptCreate) -> Attempt:
         payload={
             "attempt_id": str(attempt.id),
             "signal_id": str(signal.id),
+            "source": signal.source,
             "repo": signal.repo,
             "issue_number": signal.issue_number,
             "title": signal.title,
             "body": signal.body,
+            "metadata": signal.metadata_json,
+            "project_fields": signal.project_fields_json,
         },
         attempt_id=attempt.id,
     )
@@ -216,3 +223,118 @@ async def list_attempt_clarifications(
         }
         for c in clarifications
     ]
+
+
+@router.get("/{attempt_id}/logs")
+async def get_attempt_logs(
+    db: DbSession,
+    attempt_id: UUID,
+    after_sequence: int = Query(0, ge=0, description="Return logs after this sequence number"),
+) -> list[dict]:
+    """
+    Get logs for an attempt.
+
+    Returns all LOG artifacts for the attempt, ordered by sequence number.
+    Use after_sequence to paginate or get new logs since last fetch.
+    """
+    # Verify attempt exists
+    attempt = await db.get(Attempt, attempt_id)
+    if not attempt:
+        raise HTTPException(status_code=404, detail="Attempt not found")
+
+    # Fetch log artifacts
+    query = (
+        select(Artifact)
+        .where(Artifact.attempt_id == attempt_id)
+        .where(Artifact.type == ArtifactType.LOG)
+        .where(Artifact.sequence_num > after_sequence)
+        .order_by(Artifact.sequence_num)
+    )
+    result = await db.execute(query)
+    logs = result.scalars().all()
+
+    return [
+        {
+            "sequence_num": log.sequence_num,
+            "content": log.content_text,
+            "is_final": log.is_final,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        }
+        for log in logs
+    ]
+
+
+@router.get("/{attempt_id}/logs/stream")
+async def stream_attempt_logs(
+    attempt_id: UUID,
+    after_sequence: int = Query(0, ge=0, description="Start streaming after this sequence number"),
+) -> EventSourceResponse:
+    """
+    Stream logs for an attempt via Server-Sent Events.
+
+    Streams LOG artifacts as they are created. The stream ends when:
+    - An artifact with is_final=True is encountered
+    - The attempt is no longer in pending/running status
+
+    Events:
+    - "log": A log entry with {sequence_num, content, is_final, created_at}
+    - "done": Stream is complete, client should close connection
+    - "error": An error occurred
+    """
+
+    async def event_generator():
+        last_seq = after_sequence
+
+        # Use a fresh session for each poll to avoid stale reads
+        while True:
+            try:
+                async with AsyncSessionLocal() as db:
+                    # Check attempt status
+                    attempt = await db.get(Attempt, attempt_id)
+                    if not attempt:
+                        yield {"event": "error", "data": "Attempt not found"}
+                        return
+
+                    # Fetch new logs since last_seq
+                    query = (
+                        select(Artifact)
+                        .where(Artifact.attempt_id == attempt_id)
+                        .where(Artifact.type == ArtifactType.LOG)
+                        .where(Artifact.sequence_num > last_seq)
+                        .order_by(Artifact.sequence_num)
+                    )
+                    result = await db.execute(query)
+                    logs = result.scalars().all()
+
+                    # Yield each log entry
+                    for log in logs:
+                        import json
+                        yield {
+                            "event": "log",
+                            "data": json.dumps({
+                                "sequence_num": log.sequence_num,
+                                "content": log.content_text,
+                                "is_final": log.is_final,
+                                "created_at": log.created_at.isoformat() if log.created_at else None,
+                            }),
+                        }
+                        last_seq = log.sequence_num
+
+                        # If this is the final log, we're done
+                        if log.is_final:
+                            yield {"event": "done", "data": ""}
+                            return
+
+                    # Check if attempt is finished (no more logs coming)
+                    if attempt.status not in [AttemptStatus.PENDING, AttemptStatus.RUNNING]:
+                        yield {"event": "done", "data": ""}
+                        return
+
+            except Exception as e:
+                yield {"event": "error", "data": str(e)}
+                return
+
+            # Poll interval
+            await asyncio.sleep(0.5)
+
+    return EventSourceResponse(event_generator())

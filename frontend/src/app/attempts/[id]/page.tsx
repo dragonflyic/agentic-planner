@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { api, AttemptWithSignal } from "@/lib/api";
+import { api, AttemptWithSignal, AttemptClarification } from "@/lib/api";
+import { LogViewer } from "@/components/LogViewer";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-gray-100 text-gray-700",
@@ -18,6 +19,7 @@ export default function AttemptDetailPage() {
   const attemptId = params.id as string;
 
   const [attempt, setAttempt] = useState<AttemptWithSignal | null>(null);
+  const [clarifications, setClarifications] = useState<AttemptClarification[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -27,6 +29,12 @@ export default function AttemptDetailPage() {
       try {
         const data = await api.getAttempt(attemptId);
         setAttempt(data);
+
+        // Fetch clarifications if status is needs_human
+        if (data.status === "needs_human") {
+          const clars = await api.getAttemptClarifications(attemptId);
+          setClarifications(clars);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to fetch attempt");
       } finally {
@@ -152,6 +160,42 @@ export default function AttemptDetailPage() {
         </div>
       )}
 
+      {/* Human Feedback Needed */}
+      {attempt.status === "needs_human" && clarifications.length > 0 && (
+        <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-4 mb-6">
+          <p className="text-orange-700 dark:text-orange-400 font-medium mb-3">
+            Human Feedback Needed
+          </p>
+          <div className="space-y-4">
+            {clarifications.map((c) => (
+              <div
+                key={c.id}
+                className="bg-white dark:bg-gray-800 rounded p-3 border border-orange-100 dark:border-orange-900"
+              >
+                <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">
+                  {c.question_text}
+                </p>
+                {c.question_context && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                    {c.question_context}
+                  </p>
+                )}
+                {c.default_answer && (
+                  <p className="text-xs text-gray-400 dark:text-gray-500">
+                    Default: {c.default_answer}
+                  </p>
+                )}
+                {c.is_answered && (
+                  <p className="text-sm text-green-600 dark:text-green-400 mt-2">
+                    Answered: {c.answer_text || "(accepted default)"}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* What Changed */}
       {summary.what_changed && summary.what_changed.length > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-6">
@@ -192,7 +236,7 @@ export default function AttemptDetailPage() {
 
       {/* Assumptions */}
       {summary.assumptions && summary.assumptions.length > 0 && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-6">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
             Assumptions Made
           </h2>
@@ -208,6 +252,9 @@ export default function AttemptDetailPage() {
           </ul>
         </div>
       )}
+
+      {/* Execution Logs */}
+      <LogViewer attemptId={attemptId} attemptStatus={attempt.status} />
     </div>
   );
 }

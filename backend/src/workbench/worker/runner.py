@@ -1,18 +1,20 @@
 """Main worker process for processing attempt jobs."""
 
 import asyncio
+import json
 import signal
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import update
 
 from workbench.config import get_settings
 from workbench.db.session import AsyncSessionLocal
-from workbench.models import Attempt, AttemptStatus, Clarification, Job, JobType, Signal
+from workbench.models import Artifact, ArtifactType, Attempt, AttemptStatus, Clarification, Job, JobType, Signal
 from workbench.services.job_service import JobService
 from workbench.worker.classifier import OutcomeClassifier
-from workbench.worker.executor import ClaudeCodeExecutor
+from workbench.worker.executor import ClaudeCodeExecutor, SignalContext
 from workbench.worker.sandbox import WorkspaceSandbox
 
 
@@ -105,10 +107,18 @@ class AttemptWorker:
         payload = job.payload
         attempt_id = payload.get("attempt_id")
         signal_id = payload.get("signal_id")
-        repo = payload.get("repo")
-        title = payload.get("title")
-        body = payload.get("body")
-        clarifications = payload.get("clarifications", [])
+
+        # Build full signal context
+        signal_context = SignalContext(
+            source=payload.get("source", "unknown"),
+            repo=payload.get("repo"),
+            issue_number=payload.get("issue_number"),
+            title=payload.get("title"),
+            body=payload.get("body"),
+            metadata=payload.get("metadata"),
+            project_fields=payload.get("project_fields"),
+            clarifications=payload.get("clarifications", []),
+        )
 
         # Update attempt status to RUNNING
         await db.execute(
@@ -122,7 +132,44 @@ class AttemptWorker:
         await db.commit()
 
         # Build repo URL
-        repo_url = f"https://github.com/{repo}.git"
+        repo_url = f"https://github.com/{signal_context.repo}.git"
+
+        # Track sequence number for logs
+        sequence_num = 0
+
+        # Create log callback to write artifacts
+        async def log_callback(seq: int, log_entry: dict[str, Any], is_final: bool) -> None:
+            """Write log entry as an artifact."""
+            artifact = Artifact(
+                attempt_id=UUID(attempt_id) if isinstance(attempt_id, str) else attempt_id,
+                type=ArtifactType.LOG,
+                name=f"log_{seq:04d}",
+                sequence_num=seq,
+                is_final=is_final,
+                content_text=json.dumps(log_entry),
+            )
+            db.add(artifact)
+            await db.commit()
+
+        async def log_event(event_type: str, message: str, details: dict[str, Any] | None = None) -> None:
+            """Log a timeline event."""
+            nonlocal sequence_num
+            sequence_num += 1
+            await log_callback(sequence_num, {
+                "type": "event",
+                "timestamp": datetime.now(UTC).isoformat(),
+                "event": event_type,
+                "message": message,
+                "details": details,
+            }, is_final=False)
+
+        # Log attempt start
+        await log_event("attempt_started", f"Starting attempt for signal: {signal_context.title[:50]}...")
+
+        # Log repo clone
+        await log_event("cloning_repo", f"Cloning repository: {signal_context.repo}", {
+            "repo_url": repo_url,
+        })
 
         # Create workspace and run Claude Code
         async with WorkspaceSandbox.create(
@@ -130,6 +177,11 @@ class AttemptWorker:
             github_pat=self.settings.github_pat or None,
             base_dir=self.settings.worker_tmpdir_base,
         ) as sandbox:
+            await log_event("workspace_ready", f"Workspace created at {sandbox.path}", {
+                "branch": sandbox.branch_name,
+                "path": str(sandbox.path),
+            })
+
             # Create executor
             executor = ClaudeCodeExecutor(
                 cwd=sandbox.path,
@@ -137,12 +189,45 @@ class AttemptWorker:
                 timeout_seconds=self.settings.claude_default_timeout_seconds,
             )
 
-            # Execute Claude Code
+            # Log execution start
+            await log_event("execution_starting", "Starting Claude Code execution")
+
+            # Create executor log callback that tracks sequence numbers
+            async def executor_log_callback(seq: int, log_entry: dict[str, Any], is_final: bool) -> None:
+                nonlocal sequence_num
+                sequence_num += 1
+                await log_callback(sequence_num, log_entry, is_final)
+
+            # Execute Claude Code with log streaming
             execution_result = await executor.execute(
-                signal_title=title,
-                signal_body=body,
-                clarifications=clarifications,
+                signal=signal_context,
+                log_callback=executor_log_callback,
             )
+
+            # Save the prompt as a separate artifact for easy access
+            sequence_num += 1
+            prompt_artifact = Artifact(
+                attempt_id=UUID(attempt_id) if isinstance(attempt_id, str) else attempt_id,
+                type=ArtifactType.LOG,
+                name="prompt",
+                sequence_num=0,  # Always first
+                is_final=False,
+                content_text=json.dumps({
+                    "type": "prompt",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "content": execution_result.prompt,
+                }),
+            )
+            db.add(prompt_artifact)
+            await db.commit()
+
+            # Log execution complete
+            await log_event("execution_complete", f"Claude Code execution finished", {
+                "turns": execution_result.metrics.turn_count,
+                "tool_calls": execution_result.metrics.tool_call_count,
+                "cost_usd": execution_result.metrics.total_cost_usd,
+                "interrupted": execution_result.interrupted_for_questions,
+            })
 
             # Get diff stats
             diff_stats = await sandbox.get_diff_stats()
@@ -173,6 +258,7 @@ class AttemptWorker:
                 "runner_metadata_json": {
                     "timed_out": execution_result.timed_out,
                     "budget_exceeded": execution_result.budget_exceeded,
+                    "interrupted_for_questions": execution_result.interrupted_for_questions,
                     "session_id": execution_result.output.get("session_id"),
                 },
             }
@@ -217,8 +303,12 @@ class AttemptWorker:
                 )
 
             elif classification.status == AttemptStatus.FAILED:
-                # Keep signal in pending state for potential retry
-                pass
+                # Reset signal to pending state for potential retry
+                await db.execute(
+                    update(Signal)
+                    .where(Signal.id == signal_id)
+                    .values(state="pending")
+                )
 
             await db.commit()
 
